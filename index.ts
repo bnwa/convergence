@@ -16,8 +16,8 @@ const dirtyMap: Map<number,boolean> = new Map
 
 class Signal<T> {
   private readonly id = Id()
-  private deps: Array<number> = []
-  private numDeps = 0
+  private subs: Array<number> = []
+  private numSubs = 0
   private genUpdated = -1
   constructor(private x: T) {
     dirtyMap.set(this.id, true)
@@ -25,15 +25,15 @@ class Signal<T> {
 
   get() : T {
     const { id } = this
-    const { deps } = this
+    const { subs } = this
     const { genUpdated } = this
     const currentId = stackFrames[stackFrame]
     if (genUpdated !== stackGen) {
       this.genUpdated = stackGen
     }
     if (stackFrame === 0) stackGen++
-    if (currentId !== -1 && !deps.includes(currentId)) {
-      this.numDeps = this.deps.push(currentId)
+    if (currentId !== -1 && !subs.includes(currentId)) {
+      this.numSubs = this.subs.push(currentId)
     }
     console.log(`Visited ${id} - Signal - Gen#${stackGen} - Frame#${currentId}`)
     return this.x
@@ -41,8 +41,8 @@ class Signal<T> {
 
   put(x: T) : Signal<T> {
     const { id } = this
-    const { deps } = this
-    const { numDeps } = this
+    const { subs } = this
+    const { numSubs } = this
     const { genUpdated } = this
     const isValid =
       stackFrame === 0 ||
@@ -58,7 +58,7 @@ class Signal<T> {
 
     this.x = x
     dirtyMap.set(id, true)
-    for (const dep of deps) dirtyMap.set(dep, true)
+    for (const subId of subs) dirtyMap.set(subId, true)
     return this
   }
 
@@ -68,20 +68,20 @@ class Signal<T> {
 class Computed<T> {
   private memo: T
   private readonly id = Id()
-  private deps: Array<number> = []
-  private numDeps = 0
+  private subs: Array<number> = []
+  private numSubs = 0
   private genVisited = -1
   constructor(private readonly fn: () => T) {
     dirtyMap.set(this.id, true)
   }
   get() :T {
     const { id } = this
-    const { deps } = this
+    const { subs } = this
     const { genVisited } = this
     const currentId = stackFrames[stackFrame]
     if (stackFrame === 0) stackGen++
-    if (currentId !== -1 && !deps.includes(currentId)) {
-      this.numDeps = this.deps.push(currentId)
+    if (currentId !== -1 && !subs.includes(currentId)) {
+      this.numSubs = this.subs.push(currentId)
     }
     if (genVisited === stackGen || !dirtyMap.get(id)) {
       console.log(`Visited ${id} - No Compute - Gen#${stackGen} - Frame#${currentId}`)
