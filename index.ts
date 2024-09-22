@@ -1,9 +1,9 @@
-let id = -1
+let id = 0
 function Id() { return ++id }
 
 let stackGen = 0
-let stackFrame = 1
-const stackFrames = [-1]
+let stackFrame = 0
+const stackFrames = [0]
 
 const SAME_GEN_PUT =
   `Cannot update signal twice in same generation of stack frames`
@@ -33,11 +33,11 @@ class Signal<T> {
     if (genUpdated !== stackGen) {
       this.genUpdated = stackGen
     }
-    if (stackFrame === 1) stackGen++
+    if (stackFrame === 0) stackGen++
     if (currentId !== -1 && !deps.includes(currentId)) {
       this.numDeps = this.deps.push(currentId)
     }
-    console.log(`Visited ${id}`)
+    console.log(`Visited ${id} - Signal - Gen#${stackGen} - Frame#${currentId}`)
     return this.x
   }
 
@@ -45,7 +45,7 @@ class Signal<T> {
     const { id } = this
     const { genUpdated } = this
     const isValid =
-      stackFrame === 1 ||
+      stackFrame === 0 ||
       genUpdated !== stackGen
 
     if (!isValid) {
@@ -81,15 +81,15 @@ class Computed<T> {
       this.numDeps = this.deps.push(currentId)
     }
     if (genVisited === stackGen) {
-      console.log(`Visited ${id} - No Compute`)
+      console.log(`Visited ${id} - No Compute - Gen#${stackGen} - Frame#${currentId}`)
       return this.memo
     }
-    stackFrame = stackFrames.push(id)
+    stackFrame = stackFrames.push(id) - 1
     const value = this.memo = this.fn()
     this.genVisited = stackGen
     stackFrames.pop()
     stackFrame--
-    console.log(`Visited ${id} - Had Compute`)
+    console.log(`Visited ${id} - Had Compute - Gen#${stackGen} - Frame#${currentId}`)
     return value
   }
 
