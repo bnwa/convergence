@@ -12,7 +12,6 @@ type SignalBuilder = {
   new<T>(x: T) : Signal<T>
 }
 
-const signalMap: Map<number,Signal<unknown>|Computed<unknown>> = new Map
 const dirtyMap: Map<number,boolean> = new Map
 
 class Signal<T> {
@@ -21,7 +20,6 @@ class Signal<T> {
   private numDeps = 0
   private genUpdated = -1
   constructor(private x: T) {
-    signalMap.set(this.id, this)
     dirtyMap.set(this.id, true)
   }
 
@@ -43,6 +41,8 @@ class Signal<T> {
 
   put(x: T) : Signal<T> {
     const { id } = this
+    const { deps } = this
+    const { numDeps } = this
     const { genUpdated } = this
     const isValid =
       stackFrame === 0 ||
@@ -58,6 +58,7 @@ class Signal<T> {
 
     this.x = x
     dirtyMap.set(id, true)
+    for (const dep of deps) dirtyMap.set(dep, true)
     return this
   }
 
@@ -70,7 +71,9 @@ class Computed<T> {
   private deps: Array<number> = []
   private numDeps = 0
   private genVisited = -1
-  constructor(private readonly fn: () => T) {}
+  constructor(private readonly fn: () => T) {
+    dirtyMap.set(this.id, true)
+  }
   get() :T {
     const { id } = this
     const { deps } = this
@@ -80,13 +83,14 @@ class Computed<T> {
     if (currentId !== -1 && !deps.includes(currentId)) {
       this.numDeps = this.deps.push(currentId)
     }
-    if (genVisited === stackGen) {
+    if (genVisited === stackGen || !dirtyMap.get(id)) {
       console.log(`Visited ${id} - No Compute - Gen#${stackGen} - Frame#${currentId}`)
       return this.memo
     }
     stackFrame = stackFrames.push(id) - 1
     const value = this.memo = this.fn()
     this.genVisited = stackGen
+    dirtyMap.set(id, false)
     stackFrames.pop()
     stackFrame--
     console.log(`Visited ${id} - Had Compute - Gen#${stackGen} - Frame#${currentId}`)
