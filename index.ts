@@ -16,8 +16,7 @@ const dirtyMap: Map<number,boolean> = new Map
 
 class Signal<T> {
   private readonly id = Id()
-  private subs: Array<number> = []
-  private numSubs = 0
+  private subs: Set<number> = new Set
   private genUpdated = -1
   constructor(private x: T) {
     dirtyMap.set(this.id, true)
@@ -32,8 +31,9 @@ class Signal<T> {
       this.genUpdated = stackGen
     }
     if (stackFrame === 0) stackGen++
-    if (currentId !== -1 && !subs.includes(currentId)) {
-      this.numSubs = this.subs.push(currentId)
+    if (currentId !== 0 && !subs.has(currentId)) {
+      let i = stackFrame
+      while(i) subs.add(stackFrames[i--])
     }
     console.log(`Visited ${id} - Signal - Gen#${stackGen} - Frame#${currentId}`)
     return this.x
@@ -42,7 +42,6 @@ class Signal<T> {
   put(x: T) : Signal<T> {
     const { id } = this
     const { subs } = this
-    const { numSubs } = this
     const { genUpdated } = this
     const isValid =
       stackFrame === 0 ||
@@ -56,6 +55,8 @@ class Signal<T> {
       throw new Error(msg)
     }
 
+    if (this.x === x) return this
+
     this.x = x
     dirtyMap.set(id, true)
     for (const subId of subs) dirtyMap.set(subId, true)
@@ -68,8 +69,7 @@ class Signal<T> {
 class Computed<T> {
   private memo: T
   private readonly id = Id()
-  private subs: Array<number> = []
-  private numSubs = 0
+  private subs: Set<number> = new Set
   private genVisited = -1
   constructor(private readonly fn: () => T) {
     dirtyMap.set(this.id, true)
@@ -80,8 +80,9 @@ class Computed<T> {
     const { genVisited } = this
     const currentId = stackFrames[stackFrame]
     if (stackFrame === 0) stackGen++
-    if (currentId !== -1 && !subs.includes(currentId)) {
-      this.numSubs = this.subs.push(currentId)
+    if (currentId !== 0 && !subs.has(currentId)) {
+      let i = stackFrame
+      while(i) subs.add(stackFrames[i--])
     }
     if (genVisited === stackGen || !dirtyMap.get(id)) {
       console.log(`Visited ${id} - No Compute - Gen#${stackGen} - Frame#${currentId}`)
@@ -110,12 +111,19 @@ s1.put(10)
 
 console.log(sum.get())
 
-const firstCharS = Signal.of("B")
-const firstChar = Computed.of(() => firstCharS.get())
+const firstChar = Signal.of("B")
 const firstName = Computed.of(() => `${firstChar.get()}enoit`)
 const lastName = Computed.of(() => `${firstChar.get()}arberousse`)
 const fullName = Computed.of(() => `${firstName.get()} ${lastName.get()}`)
-
+const upperCaseLast = Computed.of(() => `${lastName.get().toUpperCase()}`)
 console.log(fullName.get())
+
+firstChar.put("D")
+console.log(fullName.get())
+
+firstChar.put("D")
+console.log(fullName.get())
+
+console.log(upperCaseLast.get())
 
 
