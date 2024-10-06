@@ -4,7 +4,6 @@ const idMap: WeakMap<Signal,number> = new WeakMap
 
 let stackGen = 0
 let stackFrame = 0
-let stackIsInert = false
 const stackFrames = [0]
 
 const SAME_GEN_PUT =
@@ -14,13 +13,11 @@ type Signal = {
   get() : unknown
 }
 
-// TODO implement Effect
 class Notifier {
   private readonly pending: Set<number> = new Set
   private readonly dirtyMap: Map<number,boolean> = new Map
-  private readonly observeMap: Map<number,Set<number>> = new Map
+  private readonly observers: Set<number> = new Set
   private readonly subMap: Map<number,Set<number>> = new Map
-  private readonly depMap: Map<number,Set<number>> = new Map
   private readonly fnMap: Map<number, () => void> = new Map
 
   registerSubject(id: number) {
@@ -28,27 +25,20 @@ class Notifier {
     dirtyMap.set(id, true)
   }
 
-  registerObserver(fn: () => void, observerId: number, ...subjectIds: number[]) {
-    const { dirtyMap } = this
-    const { observeMap } = this
-    const { depMap } = this
-    const { fnMap } = this
-    // Can't add more subjects to observer
-    const deps = new Set<number>()
-    for (const sId of subjectIds) {
-      const subs = observeMap.has(sId) ?
-        observeMap.get(sId) as Set<number> :
-        observeMap.set(sId, new Set<number>).get(sId) as Set<number>
-      if (subs.has(observerId)) continue
-      else subs.add(observerId)
-        console.log(`subject#${sId} is being observed by ${observerId}`)
-    }
-    fnMap.set(observerId, fn)
-    depMap.set(observerId, deps)
-    // Should check subjects if dirty first? Or next gen?
-    dirtyMap.set(observerId, false)
+  registerObserver(observerId: number, fn: () => void) {
+    if (stackFrame !== 0) throw new Error(`Illegal Observation Attempt`)
+    this.dirtyMap.set(observerId, true)
+    this.observers.add(observerId)
     this.pending.add(observerId)
-    this.sendPending()
+    this.fnMap.set(observerId, fn)
+    stackGen++
+    stackFrame = stackFrames.push(id) - 1
+    fn()
+    this.didNotify(id)
+    stackFrames.pop()
+    stackFrame--
+    // Remove before microtask queue is processed
+    this.pending.delete(observerId)
   }
 
   observe(id: number, observer: number) {
@@ -64,53 +54,40 @@ class Notifier {
     return this.subMap.get(id)?.has(subject) ?? false
   }
 
-  notified(id: number) {
-    const { dirtyMap } = this
-    return dirtyMap.has(id) ?
-      dirtyMap.get(id) as boolean :
-      false
+  hasUpdate(id: number) {
+    return this.dirtyMap.get(id) ?? false
   }
 
   notify(id: number) {
-    const { observeMap } = this
+    const { observers } = this
     const { dirtyMap } = this
     const { pending } = this
     const { subMap } = this
     const subs = subMap.get(id) as Set<number>
     dirtyMap.set(id, true)
-    if (subs) {
-      for (const subId of subs) {
-        dirtyMap.set(subId, true)
-      }
-    }
-    if (!observeMap.has(id)) {
-      console.log(`Subject#${id} has no observers`)
-       return
-    }
-    const observers = observeMap.get(id) as Set<number>
-    for (const oId of observers) {
-      pending.add(oId)
-      console.log(`Subject#${id} has pending observer#${oId}`)
+    for (const subId of subs) {
+      dirtyMap.set(subId, true)
+      if (!observers.has(subId)) continue
+      else if (pending.has(subId)) continue
+      else pending.add(subId)
     }
     queueMicrotask(() => { if (stackFrame === 0) this.sendPending() })
   }
 
-  checked(id: number) {
-    const { dirtyMap } = this
-    if (dirtyMap.has(id)) dirtyMap.set(id, false)
-    else return
+  didNotify(id: number) {
+    this.dirtyMap.set(id, false)
   }
 
   sendPending() {
+    const { dirtyMap } = this
     const { pending } = this
     const { fnMap } = this
-    stackIsInert = true
     for (const id of pending) {
       const fn = fnMap.get(id) as () => void
       fn()
+      dirtyMap.set(id, false)
     }
     pending.clear()
-    stackIsInert = false
   }
 }
 
@@ -128,13 +105,11 @@ class State<T> implements Signal {
   get() : T {
     const { id } = this
     const { genUpdated } = this
-    if (stackIsInert) return this.x
     const currentId = stackFrames[stackFrame]
     if (genUpdated !== stackGen) {
       this.genUpdated = stackGen
     }
     if (stackFrame === 0) {
-      stackIsInert = false
       stackGen++
     }
     if (currentId !== 0 && !notifier.hasObserver(id, currentId)) {
@@ -149,17 +124,11 @@ class State<T> implements Signal {
   put(x: T) : State<T> {
     const { id } = this
     const { genUpdated } = this
-    const isValid =
-      stackFrame === 0 ||
-      genUpdated !== stackGen
+    const isValidFrame = stackFrame === 0
+    //const isValidGen = genUpdated !== stackGen
 
-    if (!isValid) {
-      const msg = `${SAME_GEN_PUT}: id#${id} - ` +
-        `current frame id: ${stackFrames[stackFrame]} - ` +
-        `current generation: ${stackGen} - ` +
-        `last updated generation: ${genUpdated}`
-      throw new Error(msg)
-    }
+    if (!isValidFrame) throw new Error(`Illegal stackframe ${stackFrame}`)
+    //if (!isValidGen) throw new Error(`Illegal update: Update Gen ${genUpdated} == Current Gen ${stackGen}`)
 
     if (this.x === x) return this
 
@@ -183,24 +152,22 @@ class Computed<T> implements Signal {
   get() :T {
     const { id } = this
     const { genVisited } = this
-    if (stackIsInert) return this.fn()
     const currentId = stackFrames[stackFrame]
     if (stackFrame === 0) {
-      stackIsInert = false
       stackGen++
     }
     if (currentId !== 0 && notifier.hasObserver(id, currentId)) {
       let i = stackFrame
       while(i) notifier.observe(id, stackFrames[i--])
     }
-    if (genVisited === stackGen || !notifier.notified(id)) {
+    if (genVisited === stackGen || !notifier.hasUpdate(id)) {
       console.log(`Visited ${id} - No Compute - Gen#${stackGen} - Frame#${currentId}`)
       return this.memo
     }
     stackFrame = stackFrames.push(id) - 1
     const value = this.memo = this.fn()
     this.genVisited = stackGen
-    notifier.checked(id)
+    notifier.didNotify(id)
     stackFrames.pop()
     stackFrame--
     console.log(`Visited ${id} - Had Compute - Gen#${stackGen} - Frame#${currentId}`)
@@ -211,17 +178,10 @@ class Computed<T> implements Signal {
   static of<T>(fn: () => T) : Computed<T> { return new Computed(fn) }
 }
 
-class Effect {
-  constructor(fn: () => void, deps: Signal[]) {
-    notifier.registerObserver(fn, Id(), ...deps.map(s => {
-      if (idMap.has(s)) return idMap.get(s) as number
-      else throw new Error(`Encountered unidentified signal`)
-    }))
-  }
-  dispose() {}
-
-  static run(fn: () => void, ...deps: Signal[]) {
-    return new Effect(fn, deps)
+const Effect = {
+  run(fn: () => void) {
+    const id = Id()
+    notifier.registerObserver(id, fn)
   }
 }
 
@@ -229,9 +189,6 @@ const s1 = State.of(5)
 const s2 = State.of(5)
 const sum = Computed.of(() => s1.get() + s2.get())
 
-Effect.run(() => console.log(`${s1.get()} + ${s2.get()} = ${sum.get()}`),
-  s1,
-  s2,
-  sum)
+Effect.run(() => console.log(`${s1.get()} + ${s2.get()} = ${sum.get()}`))
 
 s1.put(10)
